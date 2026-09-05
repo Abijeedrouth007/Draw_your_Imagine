@@ -72,11 +72,11 @@ export function GestureGuideModal({ isOpen, onClose }: GestureGuideModalProps) {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-white">Make a Fist to Erase</span>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/30">
-                  Erase
+                  Precision Eraser
                 </span>
               </div>
               <p className="text-xs text-white/60 leading-relaxed">
-                Clench all fingers into a <b>tight fist</b>. The crimson erase countdown activates and clears what you have drawn. You can press <b>Undo</b> if triggered by accident.
+                Clench your fingers into a <b>fist</b>. A real precision eraser appears at your hand—sweep it across any stroke to erase only the specific parts or lines you touch. Release your fist to resume drawing. Full Undo is supported!
               </p>
             </div>
           </div>

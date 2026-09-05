@@ -27,7 +27,8 @@ const DEFAULT_SETTINGS: CanvasSettings = {
   brushStyle: 'neon',
   pinchThreshold: 0.075,
   fistThreshold: 0.68,
-  eraseMode: 'wipe_all',
+  eraseMode: 'eraser_brush',
+  eraserSize: 44,
   showSkeleton: true,
   showTelemetry: true,
   mirrorCamera: true,
@@ -460,7 +461,7 @@ export default function SpyderAirCanvasPage() {
                       : 'text-white/60 bg-[#0F0F0F]/80 border-white/10 shadow-none scale-100'
                   }`}
                 >
-                  {isFist ? 'FIST TO ERASE' : isPinching ? 'PINCH TO DRAW' : '[ DETECTING GESTURE... ]'}
+                  {isFist ? 'FIST: PRECISION ERASER' : isPinching ? 'PINCH TO DRAW' : '[ DETECTING GESTURE... ]'}
                 </div>
               </div>
 

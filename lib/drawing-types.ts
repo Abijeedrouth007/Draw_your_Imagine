@@ -47,6 +47,7 @@ export interface CanvasSettings {
   pinchThreshold: number; // default ~0.065
   fistThreshold: number; // default ~0.75
   eraseMode: 'wipe_all' | 'eraser_brush';
+  eraserSize: number; // radius in px, default ~44
   showSkeleton: boolean;
   showTelemetry: boolean;
   mirrorCamera: boolean;

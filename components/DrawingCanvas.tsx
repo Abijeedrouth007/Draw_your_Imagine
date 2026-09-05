@@ -22,6 +22,131 @@ interface DrawingCanvasProps {
   onEraseTriggered?: () => void;
 }
 
+// Distance from point to line segment (capsule distance for swept eraser)
+function distToSegment(pt: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq === 0) {
+    return Math.hypot(pt.x - a.x, pt.y - a.y);
+  }
+  const apx = pt.x - a.x;
+  const apy = pt.y - a.y;
+  let t = (apx * abx + apy * aby) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = a.x + t * abx;
+  const projY = a.y + t * aby;
+  return Math.hypot(pt.x - projX, pt.y - projY);
+}
+
+// Granular stroke eraser: cuts & splits strokes into sub-strokes where intersected
+function eraseStrokes(
+  currentStrokes: Stroke[],
+  p1: Point,
+  p2: Point,
+  radius: number
+): { updatedStrokes: Stroke[]; wasModified: boolean } {
+  let wasModified = false;
+  const updatedStrokes: Stroke[] = [];
+
+  for (const stroke of currentStrokes) {
+    if (stroke.points.length === 0) continue;
+
+    // Fast bounding box rejection
+    let minX = stroke.points[0].x;
+    let maxX = stroke.points[0].x;
+    let minY = stroke.points[0].y;
+    let maxY = stroke.points[0].y;
+    for (let i = 1; i < stroke.points.length; i++) {
+      const pt = stroke.points[i];
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+
+    const effectivePad = radius + stroke.size + 10;
+    const eraserMinX = Math.min(p1.x, p2.x) - effectivePad;
+    const eraserMaxX = Math.max(p1.x, p2.x) + effectivePad;
+    const eraserMinY = Math.min(p1.y, p2.y) - effectivePad;
+    const eraserMaxY = Math.max(p1.y, p2.y) + effectivePad;
+
+    if (maxX < eraserMinX || minX > eraserMaxX || maxY < eraserMinY || minY > eraserMaxY) {
+      updatedStrokes.push(stroke);
+      continue;
+    }
+
+    // Densify points along any segments longer than maxGap so lines don't skip the eraser
+    const densePoints: Point[] = [];
+    const maxGap = Math.max(4, radius * 0.35);
+    for (let i = 0; i < stroke.points.length; i++) {
+      densePoints.push(stroke.points[i]);
+      if (i < stroke.points.length - 1) {
+        const a = stroke.points[i];
+        const b = stroke.points[i + 1];
+        const d = Math.hypot(b.x - a.x, b.y - a.y);
+        if (d > maxGap) {
+          const steps = Math.ceil(d / maxGap);
+          for (let s = 1; s < steps; s++) {
+            const t = s / steps;
+            densePoints.push({
+              x: a.x + t * (b.x - a.x),
+              y: a.y + t * (b.y - a.y),
+            });
+          }
+        }
+      }
+    }
+
+    // Determine surviving segments outside the eraser volume
+    const hitRadius = radius + stroke.size / 2;
+    let subStrokePoints: Point[] = [];
+    let strokeChanged = false;
+    let subIdx = 0;
+
+    for (const pt of densePoints) {
+      const dist = distToSegment(pt, p1, p2);
+      if (dist <= hitRadius) {
+        // Point is inside the real eraser zone: erase it!
+        strokeChanged = true;
+        if (subStrokePoints.length > 0) {
+          // Keep sub-strokes that have at least 2 points (or single point if original stroke was 1 point)
+          if (subStrokePoints.length >= 2 || (stroke.points.length === 1 && subStrokePoints.length === 1)) {
+            updatedStrokes.push({
+              id: `${stroke.id}-p${subIdx++}`,
+              points: subStrokePoints,
+              color: stroke.color,
+              size: stroke.size,
+              style: stroke.style,
+            });
+          }
+          subStrokePoints = [];
+        }
+      } else {
+        subStrokePoints.push(pt);
+      }
+    }
+
+    if (subStrokePoints.length > 0) {
+      if (subStrokePoints.length >= 2 || (stroke.points.length === 1 && subStrokePoints.length === 1 && !strokeChanged)) {
+        updatedStrokes.push({
+          id: strokeChanged ? `${stroke.id}-p${subIdx++}` : stroke.id,
+          points: subStrokePoints,
+          color: stroke.color,
+          size: stroke.size,
+          style: stroke.style,
+        });
+      }
+    }
+
+    if (strokeChanged) {
+      wasModified = true;
+    }
+  }
+
+  return { updatedStrokes, wasModified };
+}
+
 export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(function DrawingCanvas(
   {
     settings,
@@ -37,41 +162,49 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
+  const strokesRef = useRef<Stroke[]>([]);
+  strokesRef.current = strokes;
+
+  // History stacks for state-level Undo & Redo
+  const [historyStack, setHistoryStack] = useState<Stroke[][]>([]);
+  const [futureStack, setFutureStack] = useState<Stroke[][]>([]);
+
+  // Granular fist eraser tracking
+  const preEraseSnapshotRef = useRef<Stroke[] | null>(null);
+  const hasErasedInFistRef = useRef<boolean>(false);
+  const prevEraserPointRef = useRef<Point | null>(null);
+
   const currentStrokeRef = useRef<Point[]>([]);
   const isDrawingRef = useRef<boolean>(false);
   const smoothedPointRef = useRef<Point | null>(null);
 
-  // Fist erase hold timer tracking
-  const fistHoldStartRef = useRef<number | null>(null);
-  const [fistProgress, setFistProgress] = useState<number>(0);
-  const [lastErasedTime, setLastErasedTime] = useState<number | null>(null);
-
   // Expose undo, redo, clear, export methods
   useImperativeHandle(ref, () => ({
     undo: () => {
-      setStrokes((prev) => {
-        if (prev.length === 0) return prev;
-        const last = prev[prev.length - 1];
-        setRedoStack((r) => [...r, [last]]);
-        return prev.slice(0, prev.length - 1);
+      setHistoryStack((hStack) => {
+        if (hStack.length === 0) return hStack;
+        const previousState = hStack[hStack.length - 1];
+        const newHStack = hStack.slice(0, hStack.length - 1);
+        setFutureStack((fStack) => [...fStack, strokesRef.current]);
+        setStrokes(previousState);
+        return newHStack;
       });
     },
     redo: () => {
-      setRedoStack((prev) => {
-        if (prev.length === 0) return prev;
-        const nextStroke = prev[prev.length - 1];
-        setStrokes((s) => [...s, ...nextStroke]);
-        return prev.slice(0, prev.length - 1);
+      setFutureStack((fStack) => {
+        if (fStack.length === 0) return fStack;
+        const nextState = fStack[fStack.length - 1];
+        const newFStack = fStack.slice(0, fStack.length - 1);
+        setHistoryStack((hStack) => [...hStack, strokesRef.current]);
+        setStrokes(nextState);
+        return newFStack;
       });
     },
     clear: () => {
-      setStrokes((prev) => {
-        if (prev.length > 0) {
-          setRedoStack((r) => [...r, prev]);
-        }
-        return [];
-      });
+      if (strokesRef.current.length === 0) return;
+      setHistoryStack((h) => [...h, strokesRef.current]);
+      setFutureStack([]);
+      setStrokes([]);
     },
     exportImage: (withWebcam = false, videoEl = null) => {
       const canvas = canvasRef.current;
@@ -107,77 +240,55 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
       return exportCanvas.toDataURL('image/png');
     },
     getHistoryCount: () => ({
-      undoCount: strokes.length,
-      redoCount: redoStack.length,
+      undoCount: historyStack.length,
+      redoCount: futureStack.length,
     }),
   }));
 
-  // Handle Fist Erase logic
+  // Handle Real Granular Fist Eraser
   useEffect(() => {
-    let animFrame: number;
-
-    if (isFist && strokes.length > 0) {
-      if (!fistHoldStartRef.current) {
-        fistHoldStartRef.current = performance.now();
+    if (isFist && fistPoint && canvasWidth > 0 && canvasHeight > 0) {
+      // If this is the start of the fist gesture, take snapshot for Undo history
+      if (!preEraseSnapshotRef.current) {
+        preEraseSnapshotRef.current = strokesRef.current;
+        hasErasedInFistRef.current = false;
       }
 
-      const checkFistHold = () => {
-        if (!fistHoldStartRef.current) return;
-        const elapsed = performance.now() - fistHoldStartRef.current;
-        const requiredHold = 350;
-        const progress = Math.min(1, elapsed / requiredHold);
-        setFistProgress(progress);
+      const curX = settings.mirrorCamera ? (1 - fistPoint.x) * canvasWidth : fistPoint.x * canvasWidth;
+      const curY = fistPoint.y * canvasHeight;
+      const p2: Point = { x: curX, y: curY };
+      const p1: Point = prevEraserPointRef.current ?? p2;
+      prevEraserPointRef.current = p2;
 
-        if (progress >= 1) {
-          setStrokes((prev) => {
-            if (prev.length > 0) {
-              setRedoStack((r) => [...r, prev]);
-            }
-            return [];
-          });
-          setFistProgress(0);
-          fistHoldStartRef.current = null;
-          setLastErasedTime(Date.now());
-          onEraseTriggered?.();
-          return;
+      const eraserRadius = settings.eraserSize || 44;
+
+      if (strokesRef.current.length > 0) {
+        const { updatedStrokes, wasModified } = eraseStrokes(
+          strokesRef.current,
+          p1,
+          p2,
+          eraserRadius
+        );
+
+        if (wasModified) {
+          hasErasedInFistRef.current = true;
+          setStrokes(updatedStrokes);
         }
-
-        animFrame = requestAnimationFrame(checkFistHold);
-      };
-
-      animFrame = requestAnimationFrame(checkFistHold);
+      }
     } else {
-      fistHoldStartRef.current = null;
-      setFistProgress(0);
+      // Fist gesture ended
+      prevEraserPointRef.current = null;
+      if (hasErasedInFistRef.current && preEraseSnapshotRef.current) {
+        // Push the pre-erase snapshot to undo stack so user can undo this erase action!
+        const snapshot = preEraseSnapshotRef.current;
+        setHistoryStack((h) => [...h, snapshot]);
+        setFutureStack([]);
+        onEraseTriggered?.();
+      }
+      preEraseSnapshotRef.current = null;
+      hasErasedInFistRef.current = false;
     }
-
-    return () => {
-      if (animFrame) cancelAnimationFrame(animFrame);
-    };
-  }, [isFist, strokes.length, onEraseTriggered]);
-
-  // Handle Fist Brush Erase (if eraseMode === 'eraser_brush' and fist is active)
-  useEffect(() => {
-    if (settings.eraseMode === 'eraser_brush' && isFist && fistPoint && canvasWidth > 0 && canvasHeight > 0) {
-      const fx = settings.mirrorCamera ? (1 - fistPoint.x) * canvasWidth : fistPoint.x * canvasWidth;
-      const fy = fistPoint.y * canvasHeight;
-      const eraseRadius = 60;
-
-      setStrokes((prevStrokes) => {
-        let changed = false;
-        const updated = prevStrokes.filter((stroke) => {
-          const isNear = stroke.points.some((p) => {
-            const dx = p.x - fx;
-            const dy = p.y - fy;
-            return Math.sqrt(dx * dx + dy * dy) < eraseRadius;
-          });
-          if (isNear) changed = true;
-          return !isNear;
-        });
-        return changed ? updated : prevStrokes;
-      });
-    }
-  }, [isFist, fistPoint, settings.eraseMode, settings.mirrorCamera, canvasWidth, canvasHeight]);
+  }, [isFist, fistPoint, settings.mirrorCamera, settings.eraserSize, canvasWidth, canvasHeight, onEraseTriggered]);
 
   // Redraw canvas whenever strokes or current active stroke changes
   const redrawCanvas = useCallback(() => {
@@ -302,8 +413,9 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
           size: settings.brushSize,
           style: settings.brushStyle,
         };
+        setHistoryStack((prev) => [...prev, strokesRef.current]);
+        setFutureStack([]);
         setStrokes((prev) => [...prev, newStroke]);
-        setRedoStack([]);
       }
       isDrawingRef.current = false;
       currentStrokeRef.current = [];
@@ -336,71 +448,29 @@ export const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>
         className="w-full h-full block"
       />
 
-      {/* Fist Erase Hold Indicator Ripple */}
-      {fistProgress > 0 && fistPoint && (
+      {/* Precision Real Eraser Cursor & Ring following Fist */}
+      {isFist && fistPoint && (
         <div
-          className="absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none flex flex-col items-center justify-center transition-all duration-75"
+          className="absolute transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30 transition-all duration-75"
           style={{
             left: `${(settings.mirrorCamera ? (1 - fistPoint.x) : fistPoint.x) * 100}%`,
             top: `${fistPoint.y * 100}%`,
           }}
         >
-          <div className="relative w-28 h-28 flex items-center justify-center">
-            <div
-              className="absolute inset-0 rounded-full bg-red-500/20 animate-ping"
-              style={{ animationDuration: '0.8s' }}
-            />
-            <svg className="w-24 h-24 transform -rotate-90">
-              <circle
-                cx="48"
-                cy="48"
-                r="40"
-                stroke="rgba(239, 68, 68, 0.3)"
-                strokeWidth="6"
-                fill="rgba(15, 15, 15, 0.9)"
-              />
-              <circle
-                cx="48"
-                cy="48"
-                r="40"
-                stroke="#ef4444"
-                strokeWidth="6"
-                strokeDasharray={2 * Math.PI * 40}
-                strokeDashoffset={2 * Math.PI * 40 * (1 - fistProgress)}
-                strokeLinecap="round"
-                fill="none"
-                className="transition-all duration-75 ease-linear"
-              />
-            </svg>
-            <div className="absolute flex flex-col items-center justify-center text-center">
-              <span className="text-xl">✊</span>
-              <span className="text-[10px] font-bold text-red-400 tracking-wider uppercase mt-0.5">
-                Erasing
-              </span>
-            </div>
+          <div
+            className="rounded-full border-2 border-red-500/85 bg-red-500/15 shadow-xl shadow-red-500/30 flex items-center justify-center transition-all duration-100"
+            style={{
+              width: `${(settings.eraserSize || 44) * 2}px`,
+              height: `${(settings.eraserSize || 44) * 2}px`,
+            }}
+          >
+            {/* Center target crosshair */}
+            <div className="w-1.5 h-1.5 rounded-full bg-red-400 shadow-sm" />
           </div>
-        </div>
-      )}
-
-      {/* Instant Erase notification banner */}
-      {lastErasedTime && Date.now() - lastErasedTime < 3500 && (
-        <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-[#0F0F0F]/95 border border-red-500/40 backdrop-blur-md px-4 py-2 rounded-full shadow-2xl flex items-center gap-3 text-xs text-red-200 pointer-events-auto animate-in fade-in slide-in-from-top-4 duration-200">
-          <span className="flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="font-semibold uppercase tracking-tight">Canvas Erased (Fist Gesture)</span>
-          {redoStack.length > 0 && (
-            <button
-              id="fist-undo-action-btn"
-              onClick={() => {
-                const last = redoStack[redoStack.length - 1];
-                setStrokes((s) => [...s, ...last]);
-                setRedoStack((r) => r.slice(0, r.length - 1));
-                setLastErasedTime(null);
-              }}
-              className="ml-2 px-2.5 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-200 font-medium text-xs transition cursor-pointer"
-            >
-              Undo
-            </button>
-          )}
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-1.5 px-2.5 py-0.5 rounded-full bg-[#0F0F0F]/90 border border-red-500/40 text-[9px] font-mono font-bold text-red-300 uppercase tracking-wider whitespace-nowrap shadow-xl flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+            <span>Eraser ({(settings.eraserSize || 44) * 2}px)</span>
+          </div>
         </div>
       )}
     </div>

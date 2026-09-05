@@ -238,22 +238,23 @@ export function HandTracker({
       // 4. Fist Aura if clenched
       if (isFist) {
         const palmCenter = toScreen(landmarks[HAND_LANDMARKS.MIDDLE_MCP]);
+        const eraserRadius = settings.eraserSize || 44;
         ctx.save();
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.8)';
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 4]);
         ctx.beginPath();
-        ctx.arc(palmCenter.x, palmCenter.y, 44, 0, Math.PI * 2);
+        ctx.arc(palmCenter.x, palmCenter.y, eraserRadius, 0, Math.PI * 2);
         ctx.stroke();
 
         ctx.fillStyle = '#f87171';
         ctx.font = 'bold 11px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('FIST DETECTED - ERASE', palmCenter.x, palmCenter.y - 50);
+        ctx.fillText(`PRECISION ERASER (${eraserRadius}px)`, palmCenter.x, palmCenter.y - eraserRadius - 8);
         ctx.restore();
       }
     },
-    [settings.mirrorCamera, settings.color]
+    [settings.mirrorCamera, settings.color, settings.eraserSize]
   );
 
   // 2. Simulator Mode frame handler

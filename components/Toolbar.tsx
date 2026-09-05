@@ -15,6 +15,7 @@ import {
   Sun,
   Moon,
   Video,
+  Eraser,
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -35,6 +36,12 @@ const SIZES = [
   { label: 'Medium', size: 7 },
   { label: 'Bold', size: 14 },
   { label: 'Heavy', size: 24 },
+];
+
+const ERASER_SIZES = [
+  { label: 'S', size: 24 },
+  { label: 'M', size: 44 },
+  { label: 'L', size: 70 },
 ];
 
 export function Toolbar({
@@ -173,6 +180,32 @@ export function Toolbar({
           >
             Rainbow
           </button>
+        </div>
+
+        {/* Real Eraser Size Controls (for fist or precision erasing) */}
+        <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10" title="Eraser Size for Fist Gesture">
+          <div className="flex items-center gap-1 px-1.5 text-xs text-red-400 font-medium select-none">
+            <Eraser className="w-3.5 h-3.5" />
+            <span className="hidden md:inline text-[11px] text-white/50">Eraser</span>
+          </div>
+          {ERASER_SIZES.map((es) => {
+            const isSelected = (settings.eraserSize || 44) === es.size;
+            return (
+              <button
+                key={es.size}
+                id={`eraser-size-${es.size}`}
+                onClick={() => onSettingsChange({ ...settings, eraserSize: es.size })}
+                className={`px-2 py-1 rounded-lg text-xs font-medium transition cursor-pointer ${
+                  isSelected
+                    ? 'bg-red-500/30 text-red-200 font-bold border border-red-500/40 shadow-sm'
+                    : 'text-white/50 hover:text-white'
+                }`}
+                title={`Eraser Size ${es.label} (${es.size}px)`}
+              >
+                {es.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* View Controls & Export */}
