@@ -9,6 +9,7 @@ import { Toolbar } from '@/components/Toolbar';
 import { GestureGuideModal } from '@/components/GestureGuideModal';
 import {
   Video,
+  VideoOff,
   Camera,
   Laptop,
   ChevronDown,
@@ -33,6 +34,7 @@ const DEFAULT_SETTINGS: CanvasSettings = {
   showTelemetry: true,
   mirrorCamera: true,
   backgroundMode: 'camera',
+  cameraEnabled: true,
 };
 
 export default function SpyderAirCanvasPage() {
@@ -128,7 +130,7 @@ export default function SpyderAirCanvasPage() {
 
   const handleExport = useCallback(() => {
     if (!drawingCanvasRef.current) return;
-    const includeCamera = settings.backgroundMode === 'camera' || settings.backgroundMode === 'camera_dimmed';
+    const includeCamera = settings.cameraEnabled && (settings.backgroundMode === 'camera' || settings.backgroundMode === 'camera_dimmed');
     const dataUrl = drawingCanvasRef.current.exportImage(includeCamera, videoRefOut.current);
     if (!dataUrl) return;
 
@@ -136,13 +138,31 @@ export default function SpyderAirCanvasPage() {
     link.download = `spyder-vision-drawing-${Date.now()}.png`;
     link.href = dataUrl;
     link.click();
-  }, [settings.backgroundMode]);
+  }, [settings.backgroundMode, settings.cameraEnabled]);
+
+  // Camera Power Controls
+  const handleToggleCamera = useCallback(() => {
+    if (cameraInfo?.toggleCamera) {
+      cameraInfo.toggleCamera();
+    }
+    setSettings((s) => ({ ...s, cameraEnabled: !s.cameraEnabled }));
+  }, [cameraInfo]);
+
+  const handleTurnOffCamera = useCallback(() => {
+    cameraInfo?.stopCamera();
+    setSettings((s) => ({ ...s, cameraEnabled: false }));
+  }, [cameraInfo]);
+
+  const handleTurnOnCamera = useCallback(() => {
+    cameraInfo?.startCamera();
+    setSettings((s) => ({ ...s, cameraEnabled: true }));
+  }, [cameraInfo]);
 
   // Option Visibility & Full Screen Drawing
   const [showOptions, setShowOptions] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Global Keyboard Shortcuts (Undo, Redo, 'O' to toggle options, 'Esc' to hide, 'F' for fullscreen)
+  // Global Keyboard Shortcuts (Undo, Redo, 'C' to toggle camera, 'O' to toggle options, 'Esc' to hide, 'F' for fullscreen)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -158,6 +178,9 @@ export default function SpyderAirCanvasPage() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         handleRedo();
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        handleToggleCamera();
       } else if (e.key === 'o' || e.key === 'O') {
         setShowOptions((prev) => !prev);
       } else if (e.key === 'Escape') {
@@ -182,7 +205,7 @@ export default function SpyderAirCanvasPage() {
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, handleToggleCamera]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) {
@@ -222,12 +245,21 @@ export default function SpyderAirCanvasPage() {
               <EyeOff className="w-3.5 h-3.5 text-indigo-400" />
               <span>Hide Options</span>
             </button>
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-xs font-medium text-green-400 font-mono">
-                {isVideoActive ? 'CAM_01 ACTIVE' : 'VISION READY'}
+            <button
+              id="header-camera-toggle-btn"
+              onClick={handleToggleCamera}
+              className={`flex items-center gap-2 px-3 py-1 rounded-full border transition cursor-pointer ${
+                isVideoActive
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
+              }`}
+              title={isVideoActive ? 'Camera is ON (Click or press C to turn off)' : 'Camera is OFF (Click or press C to turn on)'}
+            >
+              <div className={`w-2 h-2 rounded-full ${isVideoActive ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-xs font-medium font-mono">
+                {isVideoActive ? 'CAM ACTIVE' : 'CAM OFF'}
               </span>
-            </div>
+            </button>
             <div className="hidden sm:flex items-center gap-4 text-xs font-mono text-white/40">
               <span>FPS: {fps > 0 ? fps.toFixed(1) : '60.0'}</span>
               <span>LATENCY: {analysis ? '14ms' : '9ms'}</span>
@@ -312,73 +344,86 @@ export default function SpyderAirCanvasPage() {
               {/* Right Side: Camera Status, Fullscreen & Direct Tab Launch */}
               <div className="flex items-center gap-2 pointer-events-auto">
                 {cameraInfo && cameraInfo.state === 'active' && !cameraInfo.isSimulator ? (
-                  <div className="relative inline-flex items-center">
-                    <div className="flex items-center gap-2 bg-[#0F0F0F]/90 border border-emerald-500/30 backdrop-blur-md px-3 py-1 rounded-full text-xs text-white/90 shadow-xl">
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                      </span>
-                      <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span className="font-medium truncate max-w-32 sm:max-w-56 text-[11px]">
-                        {cameraInfo.activeLabel || 'PC Camera Active'}
-                      </span>
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative inline-flex items-center">
+                      <div className="flex items-center gap-2 bg-[#0F0F0F]/90 border border-emerald-500/30 backdrop-blur-md px-3 py-1 rounded-full text-xs text-white/90 shadow-xl">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                        </span>
+                        <Video className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span className="font-medium truncate max-w-32 sm:max-w-56 text-[11px]">
+                          {cameraInfo.activeLabel || 'PC Camera Active'}
+                        </span>
 
-                      {/* Multi-device selector dropdown trigger */}
-                      {showOptions && cameraInfo.devices.length > 1 && (
-                        <button
-                          id="top-camera-device-dropdown-btn"
-                          onClick={() => setIsDeviceMenuOpen(!isDeviceMenuOpen)}
-                          className="p-0.5 rounded hover:bg-white/10 text-white/60 hover:text-white transition cursor-pointer ml-1"
-                          title="Switch PC Camera Device"
-                        >
-                          <ChevronDown
-                            className={`w-3 h-3 transition-transform ${isDeviceMenuOpen ? 'rotate-180' : ''}`}
-                          />
-                        </button>
+                        {/* Multi-device selector dropdown trigger */}
+                        {showOptions && cameraInfo.devices.length > 1 && (
+                          <button
+                            id="top-camera-device-dropdown-btn"
+                            onClick={() => setIsDeviceMenuOpen(!isDeviceMenuOpen)}
+                            className="p-0.5 rounded hover:bg-white/10 text-white/60 hover:text-white transition cursor-pointer ml-1"
+                            title="Switch PC Camera Device"
+                          >
+                            <ChevronDown
+                              className={`w-3 h-3 transition-transform ${isDeviceMenuOpen ? 'rotate-180' : ''}`}
+                            />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Device Switcher Dropdown Menu */}
+                      {showOptions && isDeviceMenuOpen && cameraInfo.devices.length > 1 && (
+                        <div className="absolute top-full right-0 mt-2 w-64 bg-[#0F0F0F]/95 backdrop-blur-xl border border-white/15 rounded-xl p-2 shadow-2xl z-50 text-xs text-[#E0E0E0] space-y-1 animate-in fade-in zoom-in-95">
+                          <div className="text-[10px] font-mono text-white/40 uppercase px-2 py-1 tracking-wider border-b border-white/10 flex items-center justify-between">
+                            <span>Detected PC Cameras</span>
+                            <Laptop className="w-3 h-3 text-indigo-400" />
+                          </div>
+                          {cameraInfo.devices.map((dev, idx) => {
+                            const isCur = dev.deviceId === cameraInfo.selectedDeviceId;
+                            return (
+                              <button
+                                key={dev.deviceId || idx}
+                                id={`top-switch-camera-${idx}`}
+                                onClick={() => {
+                                  cameraInfo.selectDevice(dev.deviceId);
+                                  setIsDeviceMenuOpen(false);
+                                }}
+                                className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition cursor-pointer ${
+                                  isCur
+                                    ? 'bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/30'
+                                    : 'hover:bg-white/10 text-white/80'
+                                }`}
+                              >
+                                <span className="truncate">{dev.label || `Camera ${idx + 1}`}</span>
+                                {isCur && <Check className="w-3 h-3 text-indigo-400 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
 
-                    {/* Device Switcher Dropdown Menu */}
-                    {showOptions && isDeviceMenuOpen && cameraInfo.devices.length > 1 && (
-                      <div className="absolute top-full right-0 mt-2 w-64 bg-[#0F0F0F]/95 backdrop-blur-xl border border-white/15 rounded-xl p-2 shadow-2xl z-50 text-xs text-[#E0E0E0] space-y-1 animate-in fade-in zoom-in-95">
-                        <div className="text-[10px] font-mono text-white/40 uppercase px-2 py-1 tracking-wider border-b border-white/10 flex items-center justify-between">
-                          <span>Detected PC Cameras</span>
-                          <Laptop className="w-3 h-3 text-indigo-400" />
-                        </div>
-                        {cameraInfo.devices.map((dev, idx) => {
-                          const isCur = dev.deviceId === cameraInfo.selectedDeviceId;
-                          return (
-                            <button
-                              key={dev.deviceId || idx}
-                              id={`top-switch-camera-${idx}`}
-                              onClick={() => {
-                                cameraInfo.selectDevice(dev.deviceId);
-                                setIsDeviceMenuOpen(false);
-                              }}
-                              className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition cursor-pointer ${
-                                isCur
-                                  ? 'bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/30'
-                                  : 'hover:bg-white/10 text-white/80'
-                              }`}
-                            >
-                              <span className="truncate">{dev.label || `Camera ${idx + 1}`}</span>
-                              {isCur && <Check className="w-3 h-3 text-indigo-400 shrink-0" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    {/* Direct Turn Off Camera Button */}
+                    <button
+                      id="top-turn-off-camera-btn"
+                      onClick={handleTurnOffCamera}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/20 hover:bg-red-500/30 text-red-200 text-xs font-bold border border-red-500/30 transition cursor-pointer shadow-md"
+                      title="Turn Off Camera Hardware (Press 'C')"
+                    >
+                      <VideoOff className="w-3.5 h-3.5 text-red-300" />
+                      <span className="text-[11px]">Turn Off</span>
+                    </button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5">
                     <button
                       id="top-connect-pc-camera-btn"
-                      onClick={() => cameraInfo?.startCamera()}
-                      className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-full text-xs font-semibold shadow-lg shadow-indigo-500/25 border border-indigo-400/40 transition cursor-pointer"
-                      title="Connect PC/Laptop Camera"
+                      onClick={handleTurnOnCamera}
+                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-full text-xs font-semibold shadow-lg shadow-emerald-500/25 border border-emerald-400/40 transition cursor-pointer"
+                      title="Turn On Camera (Press 'C')"
                     >
-                      <Camera className="w-3.5 h-3.5 animate-pulse" />
-                      <span className="text-[11px]">Connect PC Camera</span>
+                      <Video className="w-3.5 h-3.5" />
+                      <span className="text-[11px]">Turn On Camera</span>
                     </button>
                     {showOptions && (
                       <button
@@ -438,6 +483,8 @@ export default function SpyderAirCanvasPage() {
                   onToggleOptions={() => setShowOptions(false)}
                   canUndo={historyCounts.undoCount > 0}
                   canRedo={historyCounts.redoCount > 0}
+                  isCameraActive={isVideoActive}
+                  onToggleCamera={handleToggleCamera}
                 />
               </div>
             )}

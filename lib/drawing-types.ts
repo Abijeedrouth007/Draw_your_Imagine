@@ -52,4 +52,5 @@ export interface CanvasSettings {
   showTelemetry: boolean;
   mirrorCamera: boolean;
   backgroundMode: 'camera' | 'camera_dimmed' | 'dark' | 'light';
+  cameraEnabled: boolean;
 }

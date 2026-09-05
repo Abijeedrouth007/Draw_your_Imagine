@@ -15,6 +15,7 @@ import {
   Sun,
   Moon,
   Video,
+  VideoOff,
   Eraser,
 } from 'lucide-react';
 
@@ -29,6 +30,8 @@ interface ToolbarProps {
   onToggleOptions?: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  isCameraActive?: boolean;
+  onToggleCamera?: () => void;
 }
 
 const SIZES = [
@@ -55,6 +58,8 @@ export function Toolbar({
   onToggleOptions,
   canUndo,
   canRedo,
+  isCameraActive,
+  onToggleCamera,
 }: ToolbarProps) {
   return (
     <div className="flex flex-col gap-2.5 pointer-events-auto">
@@ -210,6 +215,33 @@ export function Toolbar({
 
         {/* View Controls & Export */}
         <div className="flex items-center gap-1.5">
+          {/* Camera Power On/Off Toggle */}
+          <button
+            id="toggle-camera-power-btn"
+            onClick={() => {
+              if (onToggleCamera) {
+                onToggleCamera();
+              } else {
+                onSettingsChange({ ...settings, cameraEnabled: !settings.cameraEnabled });
+              }
+            }}
+            className={`px-2.5 py-1.5 rounded-xl border transition cursor-pointer flex items-center gap-1.5 ${
+              (isCameraActive ?? settings.cameraEnabled)
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30'
+                : 'bg-red-500/20 border-red-500/40 text-red-300 hover:bg-red-500/30'
+            }`}
+            title={(isCameraActive ?? settings.cameraEnabled) ? 'Turn Off Camera (Press C)' : 'Turn On Camera (Press C)'}
+          >
+            {(isCameraActive ?? settings.cameraEnabled) ? (
+              <Video className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <VideoOff className="w-4 h-4 text-red-400" />
+            )}
+            <span className="text-xs font-bold whitespace-nowrap">
+              {(isCameraActive ?? settings.cameraEnabled) ? 'Cam On' : 'Cam Off'}
+            </span>
+          </button>
+
           {/* Skeleton Overlay Toggle */}
           <button
             id="toggle-skeleton-overlay-btn"

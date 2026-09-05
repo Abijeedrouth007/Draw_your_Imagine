@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Check,
   Video,
+  VideoOff,
   AlertCircle,
   HelpCircle,
   X,
@@ -27,7 +28,9 @@ export interface CameraInfo {
   devices: MediaDeviceInfo[];
   selectedDeviceId: string;
   selectDevice: (deviceId: string) => void;
-  startCamera: () => void;
+  startCamera: (targetDeviceId?: string) => void;
+  stopCamera: () => void;
+  toggleCamera: () => void;
   openSetupModal: () => void;
 }
 
@@ -559,6 +562,57 @@ export function HandTracker({
     [startCamera]
   );
 
+  // Stop camera hardware and switch cleanly to simulator
+  const stopCamera = useCallback(() => {
+    if (videoRef.current?.srcObject) {
+      const currentStream = videoRef.current.srcObject as MediaStream;
+      currentStream.getTracks().forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    const canvas = skeletonCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    onVideoReadyRef.current?.(null);
+    onAnalysisUpdate(null);
+    onPinchStateChange(false, null);
+    onFistStateChange(false, null);
+
+    setCameraState('idle');
+    setIsSimulatorMode(true);
+    setLoadingStatus('Camera turned off (Simulator active)');
+  }, [onAnalysisUpdate, onPinchStateChange, onFistStateChange]);
+
+  // Toggle camera between active and off
+  const toggleCamera = useCallback(() => {
+    if (cameraState === 'active' || cameraState === 'requesting') {
+      stopCamera();
+    } else {
+      setIsSimulatorMode(false);
+      startCamera();
+    }
+  }, [cameraState, stopCamera, startCamera]);
+
+  // Sync camera hardware with settings.cameraEnabled if toggled externally
+  useEffect(() => {
+    let isCancelled = false;
+    const timer = setTimeout(() => {
+      if (isCancelled) return;
+      if (settings.cameraEnabled === false && cameraState === 'active') {
+        stopCamera();
+      } else if (settings.cameraEnabled === true && cameraState === 'idle') {
+        setIsSimulatorMode(false);
+        startCamera();
+      }
+    }, 0);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [settings.cameraEnabled, cameraState, stopCamera, startCamera]);
+
   // Mount effect to start camera or listen for hardware changes
   useEffect(() => {
     const videoNode = videoRef.current;
@@ -567,7 +621,11 @@ export function HandTracker({
     // Asynchronously trigger camera start to avoid cascading synchronous render warning
     const timer = setTimeout(() => {
       if (!isCancelled) {
-        startCamera();
+        if (settings.cameraEnabled !== false) {
+          startCamera();
+        } else {
+          setIsSimulatorMode(true);
+        }
       }
     }, 0);
 
@@ -602,7 +660,7 @@ export function HandTracker({
         currentStream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [retryTrigger, startCamera]);
+  }, [retryTrigger, startCamera, settings.cameraEnabled]);
 
   // Notify parent component of camera diagnostics & switcher controls
   useEffect(() => {
@@ -614,10 +672,12 @@ export function HandTracker({
       devices: availableDevices,
       selectedDeviceId,
       selectDevice: handleSelectCameraDevice,
-      startCamera: () => {
+      startCamera: (targetId?: string) => {
         setIsSimulatorMode(false);
-        startCamera();
+        startCamera(targetId);
       },
+      stopCamera,
+      toggleCamera,
       openSetupModal: () => setShowSetupModal(true),
     });
   }, [
@@ -629,6 +689,8 @@ export function HandTracker({
     selectedDeviceId,
     handleSelectCameraDevice,
     startCamera,
+    stopCamera,
+    toggleCamera,
   ]);
 
   // 5. Main Vision Detection & Skeleton Rendering Loop
@@ -840,6 +902,17 @@ export function HandTracker({
                     />
                   </button>
                 )}
+
+                {/* Turn Off Camera Action Button */}
+                <button
+                  id="standalone-turn-off-cam-btn"
+                  onClick={stopCamera}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/20 hover:bg-red-500/30 text-red-200 text-[10px] font-bold border border-red-500/30 transition cursor-pointer ml-1"
+                  title="Turn Off Camera"
+                >
+                  <VideoOff className="w-3 h-3 text-red-300" />
+                  <span>Turn Off</span>
+                </button>
               </div>
 
               {/* Device Switcher Dropdown Menu */}
@@ -902,9 +975,20 @@ export function HandTracker({
 
       {/* Simulator Mode Bar (Visible when in Simulator Mode) */}
       {isSimulatorMode && (
-        <div className="absolute top-14 left-4 z-30 flex items-center gap-2 bg-[#0F0F0F]/90 border border-white/10 backdrop-blur-md px-3 py-1.5 rounded-full text-xs text-white/80 shadow-2xl">
+        <div className="absolute top-14 left-4 z-30 flex items-center gap-2.5 bg-[#0F0F0F]/90 border border-white/10 backdrop-blur-md px-3 py-1.5 rounded-full text-xs text-white/80 shadow-2xl">
           <MousePointer2 className="w-3 h-3 text-indigo-400 animate-pulse" />
-          <span>Mouse / Trackpad Simulator: Drag to <b>Pinch-Draw</b> • Right-Click to <b>Fist-Erase</b></span>
+          <span>Mouse Simulator: Drag to <b>Draw</b> • Right-Click to <b>Erase</b></span>
+          {cameraState !== 'active' && (
+            <button
+              id="simulator-turn-on-camera-btn"
+              onClick={() => toggleCamera()}
+              className="ml-1 px-2.5 py-0.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1 transition cursor-pointer shadow-md"
+              title="Turn On Camera"
+            >
+              <Video className="w-3 h-3" />
+              <span>Turn On Camera</span>
+            </button>
+          )}
         </div>
       )}
 

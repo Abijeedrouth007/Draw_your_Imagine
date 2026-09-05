@@ -109,6 +109,7 @@ export function GestureGuideModal({ isOpen, onClose }: GestureGuideModalProps) {
           <ul className="list-disc list-inside space-y-1 pl-1 text-[11px] text-white/40">
             <li>Position hand approximately 1.5 to 2.5 feet from the webcam.</li>
             <li>Ensure front-facing room lighting without excessive backlighting.</li>
+            <li>Press <b>C</b> to turn your camera on or off at any moment.</li>
             <li>Use <b>Ctrl+Z</b> (Undo) and <b>Ctrl+Y</b> (Redo) for instant revision.</li>
           </ul>
         </div>
